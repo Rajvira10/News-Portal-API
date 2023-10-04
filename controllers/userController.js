@@ -10,7 +10,6 @@ import OTP from '../models/otpModel.js';
 // @route   POST /api/users
 
 export const register = async (req, res) => {
-    console.log(process.env.EMAIL_ADDRESS);
     const { username, email, password } = req.body;
 
     if (!username || !email || !password) {
@@ -22,11 +21,23 @@ export const register = async (req, res) => {
 
     const ifUserAlreadyExists = await User.findOne({ $or: [{ email }, { username }] });
 
+
+    
     if (ifUserAlreadyExists) {
-        return res.status(400).json({
-            success: false,
-            error: ifUserAlreadyExists.email === email ? "Email already exists" : "Username already exists",
-        });
+        const ifVerified = ifUserAlreadyExists.ifVerified ? true : false;
+
+        if (ifVerified) {
+            return res.status(400).json({
+                success: false,
+                error: ifUserAlreadyExists.email === email ? "Email already exists" : "Username already exists",
+            });
+        }
+        else{
+            return res.status(400).json({
+                success: false,
+                error: "Please verify your email",
+            });
+        }
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -40,7 +51,6 @@ export const register = async (req, res) => {
 
     try {
         const savedUser = await user.save();
-        console.log(savedUser.email);
         const otp = generateOTP();
 
         const otpExpiration = new Date();
@@ -137,6 +147,81 @@ export const login = async (req, res) => {
         });
     }
 };
+
+
+// @desc    Resend OTP
+// @route   POST /api/users/resend-otp
+
+export const resendOTP = async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({
+            success: false,
+            error: "Please enter email",
+        });
+    }
+
+    try {
+        const user = await User.findOne({ email: email });
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                error: "User does not exist",
+            });
+        }
+
+        const oldOtps = await OTP.find({ email: email });
+
+        if (oldOtps) {
+            OTP.deleteMany(oldOtps);
+        }
+
+        const otp = generateOTP();
+
+        const otpExpiration = new Date();
+        otpExpiration.setMinutes(otpExpiration.getMinutes() + 10);
+
+        const newOTP = new OTP({
+            otp,
+            otpExpiration,
+            email: user.email,
+        });
+
+        await newOTP.save();
+
+        const mailOptions = {
+            from: process.env.EMAIL_ADDRESS,
+            to: user.email,
+            subject: "Email Verification",
+            html: `<h1>OTP: ${otp}</h1>`,
+        };
+
+        transporter.sendMail(mailOptions, (err, info) => {
+            if (err) {
+                console.log(err);
+            } else {
+                console.log(info);
+            }
+        }
+        );
+
+        res.json({
+            success: true,
+            user: {
+                id: user._id,
+                username: user.username,
+                email: user.email,
+            },
+        });
+    } catch (err) {
+        res.status(400).json({
+            success: false,
+            error: err.message,
+        });
+    }
+}
 
 
 // @desc    Verify OTP
